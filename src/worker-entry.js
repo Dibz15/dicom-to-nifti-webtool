@@ -31,7 +31,14 @@ Module({
   // which throws when import.meta.url is a blob: URL (as it is when this worker
   // script is constructed from a Blob, which is what lets this run under file://
   // as well as from a GitHub Pages origin with no extra requests).
-  locateFile: (path) => path
+  locateFile: (path) => path,
+  // By default the Emscripten glue falls back to console.log/console.error for
+  // dcm2niix's own stdout/stderr, which means all of its per-series diagnostics
+  // ("Found N DICOM files", "Warning: ...", "Error: Missing images...", etc.)
+  // are invisible unless someone opens devtools. Forward them to the main
+  // thread instead so the page can show real, live conversion output.
+  print: (text) => self.postMessage({ type: 'log', text, stream: 'stdout' }),
+  printErr: (text) => self.postMessage({ type: 'log', text, stream: 'stderr' })
 }).then((initializedMod) => {
   mod = initializedMod;
   self.postMessage({ type: 'ready' });
@@ -130,7 +137,15 @@ const handleMessage = async (e) => {
       convertedFiles.push(f);
     }
 
-    self.postMessage({ convertedFiles: convertedFiles, exitCode: exitCode });
+    // Always report whatever files actually landed in outDir, even on a
+    // non-zero exit code. dcm2niix processes a study series-by-series; a
+    // fatal error on one series (e.g. an inconsistent slice count on a
+    // messy DWI series) doesn't mean earlier series didn't convert fine —
+    // it just means the whole-run exit code reflects the worst outcome.
+    // Throwing those good files away on any non-3/0 exit code was silently
+    // discarding real, usable output. Let the caller decide what to do with
+    // a partial result instead.
+    self.postMessage({ type: 'result', convertedFiles: convertedFiles, exitCode: exitCode });
   } catch (err) {
     self.postMessage({ type: 'error', message: err.message, error: err.stack });
   }
