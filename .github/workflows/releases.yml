@@ -1,0 +1,61 @@
+name: Release static page
+
+# Triggers on version tags, e.g.:
+#   git tag v1.0.0
+#   git push origin v1.0.0
+# Creates a GitHub Release and attaches the built single-file page as a
+# downloadable asset — separate from the live GitHub Pages deployment,
+# for people who just want to download one file and double-click it.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to release (e.g. v1.0.0). Required when run manually.'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build static page
+        run: npm run build
+        # env:
+        #   DCM2NIIX_VARIANT: standard   # smaller build without JPEG2000/JPEG-LS support
+
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rename build output for the release asset
+        run: cp dist/index.html "dicom-to-nifti-${{ steps.tag.outputs.name }}.html"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ steps.tag.outputs.name }}
+          generate_release_notes: true
+          files: dicom-to-nifti-${{ steps.tag.outputs.name }}.html

@@ -8,7 +8,11 @@ No files ever leave the browser, and the built page makes **zero runtime
 network requests**. The dcm2niix WASM binary and JSZip are embedded directly
 in the HTML at build time.
 
-Live version: `https://dibz15.github.io/dicom-to-nifti-webtool`.
+Live version: [DICOM to NIfTI Webtool](https://dibz15.github.io/dicom-to-nifti-webtool/)
+
+## Usage
+
+Either navigate to the live page above, or download the latest release from [GitHub releases](https://github.com/DIBZ15/dicom-to-nifti-webtool/releases/latest) and open `index.html` in your browser. See below for local development options.
 
 ## How it works
 
