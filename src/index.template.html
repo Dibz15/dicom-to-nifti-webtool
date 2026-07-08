@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DICOM → NIfTI Converter</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2f3a;
+    --text: #e6e8eb;
+    --muted: #93989f;
+    --accent: #5b8def;
+    --accent-hover: #4b7bdc;
+    --ok: #4caf6a;
+    --err: #e5534b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    justify-content: center;
+    padding: 40px 16px;
+  }
+  .card {
+    width: 100%;
+    max-width: 640px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; line-height: 1.5; }
+  .drop {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 32px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .drop.drag { border-color: var(--accent); background: rgba(91,141,239,0.08); }
+  .drop strong { color: var(--text); }
+  .drop small { display: block; color: var(--muted); margin-top: 6px; }
+  input[type=file] { display: none; }
+  .file-count { margin-top: 14px; font-size: 13px; color: var(--muted); text-align: center; }
+  .options {
+    display: flex;
+    gap: 18px;
+    margin-top: 18px;
+    font-size: 13px;
+    color: var(--muted);
+    flex-wrap: wrap;
+  }
+  .options label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  button {
+    width: 100%;
+    margin-top: 20px;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: white;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  button:hover:not(:disabled) { background: var(--accent-hover); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .log {
+    margin-top: 18px;
+    background: #0b0d12;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: var(--muted);
+    max-height: 160px;
+    overflow-y: auto;
+    display: none;
+    white-space: pre-wrap;
+  }
+  .results { margin-top: 18px; display: none; }
+  .results-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .results h2 { font-size: 14px; margin: 0; color: var(--muted); font-weight: 600; }
+  .secondary-btn {
+    width: auto;
+    margin-top: 0;
+    padding: 7px 12px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color .15s, background .15s;
+  }
+  .secondary-btn:hover:not(:disabled) { border-color: var(--accent); background: rgba(91,141,239,0.08); }
+  .secondary-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .result-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    background: #0b0d12;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+  .result-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .result-item a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+    flex-shrink: 0;
+    margin-left: 12px;
+  }
+  .result-item a:hover { text-decoration: underline; }
+  .status { margin-top: 14px; font-size: 13px; text-align: center; min-height: 18px; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .footer-note { margin-top: 22px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>DICOM → NIfTI Converter</h1>
+  <p class="sub">Runs entirely in your browser using the WASM build of dcm2niix (via @niivue/dcm2niix). Fully offline — no files, and no network requests, leave your machine after this page loads.</p>
+
+  <div class="drop" id="drop">
+    <strong>Click to choose a DICOM folder</strong>
+    <small>or drag & drop a folder / DICOM files here</small>
+  </div>
+  <input type="file" id="folderInput" webkitdirectory multiple />
+
+  <div class="file-count" id="fileCount"></div>
+
+  <div class="options">
+    <label><input type="checkbox" id="optGzip" checked /> Compress output (.nii.gz)</label>
+    <label><input type="checkbox" id="optBids" checked /> Generate BIDS JSON sidecar</label>
+  </div>
+
+  <button id="convertBtn" disabled>Convert to NIfTI</button>
+
+  <div class="status" id="status"></div>
+  <div class="log" id="log"></div>
+
+  <div class="results" id="results">
+    <div class="results-header">
+      <h2>Converted files</h2>
+      <button id="downloadAllBtn" class="secondary-btn" type="button">Download all as .zip</button>
+    </div>
+    <div id="resultList"></div>
+  </div>
+
+  <div class="footer-note">Powered by dcm2niix (Chris Rorden) compiled to WebAssembly by the NiiVue project. All assets are embedded in this file — nothing is downloaded at runtime.</div>
+</div>
+
+<!-- Embedded assets: base64-encoded dcm2niix.wasm and the bundled worker script.
+     Stored as text/plain (inert) tags so the browser never executes them directly;
+     they're decoded and turned into a Worker via a Blob URL at runtime. This is what
+     lets the whole tool run from file:// with no server and no external requests. -->
+<script type="text/plain" id="wasm-b64">__WASM_B64_PLACEHOLDER__</script>
+<script type="text/plain" id="worker-b64">__WORKER_B64_PLACEHOLDER__</script>
+
+<!-- Embedded JSZip (bundled, minified), used only for the "Download all as .zip" button. -->
+<script>__JSZIP_JS_PLACEHOLDER__</script>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---- Minimal Dcm2niix client (adapted from @niivue/dcm2niix's index.js),
+  // rewired to construct its worker from an embedded Blob instead of a remote URL. ----
+
+  class Processor {
+    constructor({ worker, fileList }) {
+      this.worker = worker;
+      this.fileList = fileList;
+      this.commands = [];
+    }
+    _addCommand(cmd, ...args) {
+      this.commands.push(cmd, ...args.map(String));
+      return this;
+    }
+    b(value) { return this._addCommand('-b', value); }
+    bids(value) { return this.b(value); }
+    z(value) { return this._addCommand('-z', value); }
+    gzip(value) { return this.z(value); }
+    v(value) { return this._addCommand('-v', value); }
+    verbose(value) { return this.v(value); }
+    async run() {
+      return new Promise((resolve, reject) => {
+        this.worker.onmessage = (e) => {
+          if (e.data.type === 'error') {
+            reject(new Error(e.data.message));
+          } else {
+            const { convertedFiles, exitCode } = e.data;
+            if (exitCode === 0 || exitCode === 3) {
+              resolve(convertedFiles);
+            } else {
+              reject(new Error(`dcm2niix processing failed with exit code ${exitCode}`));
+            }
+          }
+        };
+        const args = [...this.commands];
+        if (this.worker === null) {
+          reject(new Error('Worker not initialized. Did you await the init() method?'));
+        }
+        this.worker.postMessage({ fileList: this.fileList, cmd: args });
+      });
+    }
+  }
+
+  class Dcm2niix {
+    constructor() {
+      this.worker = null;
+    }
+    init() {
+      const wasmB64 = document.getElementById('wasm-b64').textContent.trim();
+      const workerSrc = atob(document.getElementById('worker-b64').textContent.trim());
+      const fullWorkerSrc = `self.__DCM2NIIX_WASM_B64__ = ${JSON.stringify(wasmB64)};\n` + workerSrc;
+      const blob = new Blob([fullWorkerSrc], { type: 'application/javascript' });
+      const blobUrl = URL.createObjectURL(blob);
+      this.worker = new Worker(blobUrl, { type: 'module' });
+      return new Promise((resolve, reject) => {
+        this.worker.onmessage = (event) => {
+          if (event.data && event.data.type === 'ready') {
+            resolve(true);
+          }
+        };
+        this.worker.onerror = (error) => {
+          reject(new Error(`Worker failed to load: ${error.message}`));
+        };
+      });
+    }
+    conformFileList(fileObjectOrArray) {
+      return Array.from(fileObjectOrArray).map((file) => ({
+        file,
+        webkitRelativePath: file.webkitRelativePath || file._webkitRelativePath || ''
+      }));
+    }
+    input(fileListObject) {
+      const conformedFileList = this.conformFileList(fileListObject);
+      return new Processor({ worker: this.worker, fileList: conformedFileList });
+    }
+  }
+
+  // ---- UI wiring ----
+
+  const dropEl = document.getElementById('drop');
+  const folderInput = document.getElementById('folderInput');
+  const fileCountEl = document.getElementById('fileCount');
+  const convertBtn = document.getElementById('convertBtn');
+  const statusEl = document.getElementById('status');
+  const logEl = document.getElementById('log');
+  const resultsEl = document.getElementById('results');
+  const resultListEl = document.getElementById('resultList');
+  const downloadAllBtn = document.getElementById('downloadAllBtn');
+  const optGzip = document.getElementById('optGzip');
+  const optBids = document.getElementById('optBids');
+
+  let selectedFiles = null;
+  let lastResultFiles = null;
+
+  function setStatus(msg, cls) {
+    statusEl.textContent = msg || '';
+    statusEl.className = 'status' + (cls ? ' ' + cls : '');
+  }
+
+  function log(msg) {
+    logEl.style.display = 'block';
+    logEl.textContent += msg + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function updateSelection(files) {
+    if (!files || files.length === 0) {
+      selectedFiles = null;
+      fileCountEl.textContent = '';
+      convertBtn.disabled = true;
+      return;
+    }
+    selectedFiles = files;
+    fileCountEl.textContent = `${files.length} file${files.length === 1 ? '' : 's'} selected`;
+    convertBtn.disabled = false;
+    resultsEl.style.display = 'none';
+    resultListEl.innerHTML = '';
+    setStatus('');
+  }
+
+  dropEl.addEventListener('click', () => folderInput.click());
+
+  dropEl.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropEl.classList.add('drag');
+  });
+  dropEl.addEventListener('dragleave', () => dropEl.classList.remove('drag'));
+  dropEl.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dropEl.classList.remove('drag');
+    const items = e.dataTransfer.items;
+    const files = [];
+    if (items && items.length && items[0].webkitGetAsEntry) {
+      async function readEntry(entry) {
+        if (entry.isFile) {
+          await new Promise((resolve) => {
+            entry.file((f) => { files.push(f); resolve(); });
+          });
+        } else if (entry.isDirectory) {
+          const reader = entry.createReader();
+          const entries = await new Promise((resolve) => {
+            const all = [];
+            function readBatch() {
+              reader.readEntries((batch) => {
+                if (!batch.length) { resolve(all); return; }
+                all.push(...batch);
+                readBatch();
+              });
+            }
+            readBatch();
+          });
+          for (const child of entries) await readEntry(child);
+        }
+      }
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry();
+        if (entry) await readEntry(entry);
+      }
+      updateSelection(files);
+    } else {
+      updateSelection(Array.from(e.dataTransfer.files || []));
+    }
+  });
+
+  folderInput.addEventListener('change', (e) => updateSelection(Array.from(e.target.files || [])));
+
+  convertBtn.addEventListener('click', async () => {
+    if (!selectedFiles || selectedFiles.length === 0) return;
+
+    convertBtn.disabled = true;
+    resultsEl.style.display = 'none';
+    resultListEl.innerHTML = '';
+    logEl.textContent = '';
+    logEl.style.display = 'none';
+    lastResultFiles = null;
+    downloadAllBtn.disabled = false;
+    downloadAllBtn.textContent = 'Download all as .zip';
+    setStatus('Loading dcm2niix (WASM)…');
+
+    try {
+      const dcm2niix = new Dcm2niix();
+      await dcm2niix.init();
+
+      setStatus('Converting… this happens entirely on your device.');
+      log(`Starting conversion of ${selectedFiles.length} file(s)…`);
+
+      const converter = dcm2niix
+        .input(selectedFiles)
+        .gzip(optGzip.checked ? 'y' : 'n')
+        .bids(optBids.checked ? 'y' : 'n');
+
+      const resultFiles = await converter.run();
+
+      if (!resultFiles || resultFiles.length === 0) {
+        setStatus('No output files were produced. Check that a valid DICOM folder was selected.', 'err');
+        log('Conversion finished with no output files.');
+      } else {
+        setStatus(`Done — ${resultFiles.length} file(s) produced.`, 'ok');
+        log(`Conversion complete: ${resultFiles.map(f => f.name).join(', ')}`);
+        lastResultFiles = resultFiles;
+        resultsEl.style.display = 'block';
+        downloadAllBtn.style.display = resultFiles.length > 1 ? '' : 'none';
+        for (const f of resultFiles) {
+          const url = URL.createObjectURL(f);
+          const row = document.createElement('div');
+          row.className = 'result-item';
+          const sizeKb = (f.size / 1024).toFixed(1);
+          row.innerHTML = `<span title="${f.name}">${f.name} · ${sizeKb} KB</span>`;
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = f.name;
+          a.textContent = 'Download';
+          row.appendChild(a);
+          resultListEl.appendChild(row);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      setStatus('Conversion failed — see log below.', 'err');
+      log('Error: ' + (err && err.message ? err.message : String(err)));
+    } finally {
+      convertBtn.disabled = false;
+    }
+  });
+
+  downloadAllBtn.addEventListener('click', async () => {
+    if (!lastResultFiles || lastResultFiles.length === 0) return;
+    const originalLabel = downloadAllBtn.textContent;
+    downloadAllBtn.disabled = true;
+    downloadAllBtn.textContent = 'Zipping…';
+    try {
+      const zip = new JSZip();
+      for (const f of lastResultFiles) {
+        zip.file(f.name, await f.arrayBuffer());
+      }
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'nifti-output.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (err) {
+      console.error(err);
+      setStatus('Failed to build the zip — see log below.', 'err');
+      log('Zip error: ' + (err && err.message ? err.message : String(err)));
+    } finally {
+      downloadAllBtn.disabled = false;
+      downloadAllBtn.textContent = originalLabel;
+    }
+  });
+})();
+</script>
+</body>
+</html>
