@@ -15,6 +15,7 @@
     --accent-hover: #4b7bdc;
     --ok: #4caf6a;
     --err: #e5534b;
+    --warn: #d9a441;
   }
   * { box-sizing: border-box; }
   body {
@@ -78,15 +79,17 @@
     background: #0b0d12;
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 12px 14px;
+    padding: 10px 14px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px;
     color: var(--muted);
-    max-height: 160px;
+    max-height: 220px;
     overflow-y: auto;
     display: none;
-    white-space: pre-wrap;
   }
+  .log-line { padding: 1px 0; white-space: pre-wrap; word-break: break-word; }
+  .log-line.log-error { color: var(--err); }
+  .log-line.log-warning { color: var(--warn); }
   .results { margin-top: 18px; display: none; }
   .results-header {
     display: flex;
@@ -135,6 +138,7 @@
   .status { margin-top: 14px; font-size: 13px; text-align: center; min-height: 18px; }
   .status.ok { color: var(--ok); }
   .status.err { color: var(--err); }
+  .status.warn { color: var(--warn); }
   .footer-note { margin-top: 22px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
 </style>
 </head>
@@ -206,20 +210,31 @@
     gzip(value) { return this.z(value); }
     v(value) { return this._addCommand('-v', value); }
     verbose(value) { return this.v(value); }
-    async run() {
+    // Runs the conversion. Resolves with { convertedFiles, exitCode } even
+    // when exitCode indicates a series-level failure — dcm2niix processes a
+    // study series-by-series, so a fatal error on one series doesn't mean
+    // earlier series didn't convert fine. The caller decides what "success"
+    // means for its own UI. onLogLine(text, stream) is called for each line
+    // dcm2niix prints (stream is 'stdout' or 'stderr'), as it happens.
+    async run(onLogLine) {
       return new Promise((resolve, reject) => {
-        this.worker.onmessage = (e) => {
-          if (e.data.type === 'error') {
-            reject(new Error(e.data.message));
-          } else {
-            const { convertedFiles, exitCode } = e.data;
-            if (exitCode === 0 || exitCode === 3) {
-              resolve(convertedFiles);
-            } else {
-              reject(new Error(`dcm2niix processing failed with exit code ${exitCode}`));
-            }
+        const handleMessage = (e) => {
+          const data = e.data;
+          if (data.type === 'log') {
+            if (onLogLine) onLogLine(data.text, data.stream);
+            return;
+          }
+          if (data.type === 'error') {
+            this.worker.removeEventListener('message', handleMessage);
+            reject(new Error(data.message));
+            return;
+          }
+          if (data.type === 'result') {
+            this.worker.removeEventListener('message', handleMessage);
+            resolve({ convertedFiles: data.convertedFiles, exitCode: data.exitCode });
           }
         };
+        this.worker.addEventListener('message', handleMessage);
         const args = [...this.commands];
         if (this.worker === null) {
           reject(new Error('Worker not initialized. Did you await the init() method?'));
@@ -241,11 +256,13 @@
       const blobUrl = URL.createObjectURL(blob);
       this.worker = new Worker(blobUrl, { type: 'module' });
       return new Promise((resolve, reject) => {
-        this.worker.onmessage = (event) => {
+        const handleMessage = (event) => {
           if (event.data && event.data.type === 'ready') {
+            this.worker.removeEventListener('message', handleMessage);
             resolve(true);
           }
         };
+        this.worker.addEventListener('message', handleMessage);
         this.worker.onerror = (error) => {
           reject(new Error(`Worker failed to load: ${error.message}`));
         };
@@ -285,10 +302,24 @@
     statusEl.className = 'status' + (cls ? ' ' + cls : '');
   }
 
-  function log(msg) {
+  function logLine(text, stream) {
     logEl.style.display = 'block';
-    logEl.textContent += msg + '\n';
+    const line = document.createElement('div');
+    line.textContent = text;
+    if (/^\s*Error:/i.test(text) || stream === 'stderr') {
+      line.className = 'log-line log-error';
+    } else if (/^\s*Warning:/i.test(text)) {
+      line.className = 'log-line log-warning';
+    } else {
+      line.className = 'log-line';
+    }
+    logEl.appendChild(line);
     logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function clearLog() {
+    logEl.innerHTML = '';
+    logEl.style.display = 'none';
   }
 
   function updateSelection(files) {
@@ -358,8 +389,7 @@
     convertBtn.disabled = true;
     resultsEl.style.display = 'none';
     resultListEl.innerHTML = '';
-    logEl.textContent = '';
-    logEl.style.display = 'none';
+    clearLog();
     lastResultFiles = null;
     downloadAllBtn.disabled = false;
     downloadAllBtn.textContent = 'Download all as .zip';
@@ -370,25 +400,39 @@
       await dcm2niix.init();
 
       setStatus('Converting… this happens entirely on your device.');
-      log(`Starting conversion of ${selectedFiles.length} file(s)…`);
+      logLine(`Starting conversion of ${selectedFiles.length} file(s)…`);
 
       const converter = dcm2niix
         .input(selectedFiles)
         .gzip(optGzip.checked ? 'y' : 'n')
         .bids(optBids.checked ? 'y' : 'n');
 
-      const resultFiles = await converter.run();
+      // dcm2niix's own stdout/stderr streams in live via logLine() as
+      // conversion proceeds — this is the same per-series detail you'd see
+      // running dcm2niix on the command line (series found, warnings,
+      // errors), not just a final pass/fail.
+      const { convertedFiles, exitCode } = await converter.run(logLine);
+      const cleanExit = exitCode === 0 || exitCode === 3;
 
-      if (!resultFiles || resultFiles.length === 0) {
-        setStatus('No output files were produced. Check that a valid DICOM folder was selected.', 'err');
-        log('Conversion finished with no output files.');
+      if (!convertedFiles || convertedFiles.length === 0) {
+        setStatus('No output files were produced. Check the log below for details.', 'err');
+      } else if (cleanExit) {
+        setStatus(`Done — ${convertedFiles.length} file(s) produced.`, 'ok');
       } else {
-        setStatus(`Done — ${resultFiles.length} file(s) produced.`, 'ok');
-        log(`Conversion complete: ${resultFiles.map(f => f.name).join(', ')}`);
-        lastResultFiles = resultFiles;
+        // dcm2niix processes a study series-by-series. A fatal error on one
+        // series doesn't discard files that other series already produced —
+        // surface both: what you got, and that something needs a look.
+        setStatus(
+          `Completed with errors (exit code ${exitCode}) — ${convertedFiles.length} file(s) were still produced. See the log below for which series failed.`,
+          'warn'
+        );
+      }
+
+      if (convertedFiles && convertedFiles.length > 0) {
+        lastResultFiles = convertedFiles;
         resultsEl.style.display = 'block';
-        downloadAllBtn.style.display = resultFiles.length > 1 ? '' : 'none';
-        for (const f of resultFiles) {
+        downloadAllBtn.style.display = convertedFiles.length > 1 ? '' : 'none';
+        for (const f of convertedFiles) {
           const url = URL.createObjectURL(f);
           const row = document.createElement('div');
           row.className = 'result-item';
@@ -403,9 +447,11 @@
         }
       }
     } catch (err) {
+      // This path means the worker itself failed to run at all (crashed,
+      // never initialized, etc.) — there's no partial result to recover here.
       console.error(err);
       setStatus('Conversion failed — see log below.', 'err');
-      log('Error: ' + (err && err.message ? err.message : String(err)));
+      logLine('Error: ' + (err && err.message ? err.message : String(err)));
     } finally {
       convertBtn.disabled = false;
     }
