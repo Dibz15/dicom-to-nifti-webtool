@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "Self-contained, offline-capable DICOM to NIfTI converter (dcm2niix WASM), built as a single static HTML file for GitHub Pages.",
   "type": "module",
+  "license": "Apache-2.0",
   "scripts": {
     "build": "node scripts/build.mjs",
     "serve": "npx --yes serve dist"
