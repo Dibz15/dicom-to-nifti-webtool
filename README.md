@@ -5,10 +5,10 @@ in the browser using the WebAssembly build of
 [dcm2niix](https://github.com/rordenlab/dcm2niix) via
 [`@niivue/dcm2niix`](https://github.com/niivue/mono/tree/main/packages/nv-ext-dcm2niix).
 No files ever leave the browser, and the built page makes **zero runtime
-network requests** — the dcm2niix WASM binary and JSZip are embedded directly
+network requests**. The dcm2niix WASM binary and JSZip are embedded directly
 in the HTML at build time.
 
-Live version: `https://<your-username>.github.io/<repo-name>/` once Pages is enabled (see below).
+Live version: `https://dibz15.github.io/dicom-to-nifti-webtool`.
 
 ## How it works
 
@@ -59,22 +59,6 @@ handles more real-world DICOMs, at the cost of a larger page, ~1.3MB vs
 DCM2NIIX_VARIANT=standard npm run build
 ```
 
-or uncomment the `env:` block in `.github/workflows/deploy.yml` to change
-what GitHub Actions builds.
-
-## Deploying to GitHub Pages via GitHub Actions
-
-1. Push this repo to GitHub.
-2. In the repo, go to **Settings → Pages**, and under "Build and deployment"
-   set **Source** to **GitHub Actions** (not "Deploy from a branch").
-3. Push to `main` (or run the workflow manually from the **Actions** tab) —
-   [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) will build
-   the page with `npm run build` and deploy the `dist/` folder to Pages.
-4. Your site will be live at `https://<your-username>.github.io/<repo-name>/`.
-
-No build secrets or tokens are needed beyond the default `GITHUB_TOKEN` that
-Actions provides automatically for Pages deployments.
-
 ## Project layout
 
 ```
@@ -87,6 +71,17 @@ scripts/
 .github/workflows/
   deploy.yml               # CI: npm ci && npm run build, then deploy dist/ to Pages
 ```
+
+## License
+
+This repository's own code is licensed under [Apache-2.0](LICENSE).
+
+The built page embeds compiled/bundled code from two third-party projects at
+build time (not committed here, pulled from npm): dcm2niix /
+`@niivue/dcm2niix` (BSD-2-Clause) and JSZip (MIT, dual-licensed with
+GPL-3.0-or-later — used here under the MIT option). Neither is copyleft, so
+both are compatible with Apache-2.0. Full third-party license texts are in
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ## Credits
 
